@@ -13,122 +13,8 @@ from skimage.io import imread, imsave
 from utils.write import write_obj_with_colors
 from utils.augmentation import synthesize
 import scipy.io as sio
+from io.py import load_data, save_results
 #from api import PRN
-class TrainData(object):
-
-    def __init__(self, train_data_file):
-        super(TrainData, self).__init__()
-        self.train_data_file = train_data_file
-        self.train_data_list = []
-        self.readTrainData()
-        self.index = 0
-        self.num_data = len(self.train_data_list)
-
-    def readTrainData(self):
-        with open(self.train_data_file) as fp:
-            temp = fp.readlines()
-            for item in temp:
-                item = item.strip('\n').split('*')
-                self.train_data_list.append(item)
-            random.shuffle(self.train_data_list)
-
-    def load_uv_coords(self,path = 'BFM_UV.mat'):
-        ''' load uv coords of BFM
-        Args:
-            path: path to data.
-        Returns:  
-            uv_coords: [nver, 2]. range: 0-1
-        '''
-        C = sio.loadmat(path)
-        uv_coords = C['UV'].copy(order = 'C')
-        return uv_coords
-
-    def process_uv(self,uv_coords, uv_h = 256, uv_w = 256):
-        uv_coords[:,0] = uv_coords[:,0]*(uv_w - 1)
-        uv_coords[:,1] = uv_coords[:,1]*(uv_h - 1)
-        uv_coords[:,1] = uv_h - uv_coords[:,1] - 1
-        uv_coords = np.hstack((uv_coords, np.zeros((uv_coords.shape[0], 1)))) # add z
-        return uv_coords
-
-    def getBatch_normal(self, batch_list):
-        batch = []
-        imgs = []
-        labels = []
-        for item in batch_list:
-            img = cv2.imread(item[0])
-            label = np.load(item[1])
-            img_array = np.array(img, dtype=np.float32)
-            imgs.append(img_array / 256.0 / 1.1)
-
-            label_array = np.array(label, dtype=np.float32)
-            labels.append(label_array / 256 / 1.1)
-        batch.append(imgs)
-        batch.append(labels)
-
-        return batch
-
-    def getBatch(self, batch_list):
-        batch = []
-        imgs = []
-        labels = []
-        #step = 0
-        face_ind = np.loadtxt('./Data/uv-data/face_ind.txt').astype(np.int32)
-        triangles = np.loadtxt('./Data/uv-data/triangles.txt').astype(np.int32)
-        for item in batch_list:
-            # step = step + 1
-            # print('read num :',step)
-            # print('0: ',item[0])
-            if '300W' in item[0]:
-                img = cv2.imread(item[0])
-                label = np.load(item[1])
-                img_array = np.array(img, dtype=np.float32)
-                imgs.append(img_array / 256.0 / 1.1)
-
-                label_array = np.array(label, dtype=np.float32)
-                labels.append(label_array / 256 / 1.1)
-                #print('common')
-            else:
-                name = item[0].split('/posmap/')[1]
-                mode = 0
-                if '-0.jpg' in name:
-                    mode = 0
-                if '-1.jpg' in name:
-                    mode = 1
-                if '-2.jpg' in name:
-                    mode = 2
-                #print('name: ',name)
-                img = cv2.imread(item[0])
-                label = np.load(item[1])
-                img_,label_ = synthesize(img,label,face_ind,triangles,mode)
-                img_array = np.array(img_, dtype=np.float32)
-                imgs.append(img_array / 256.0 / 1.1)
-
-                label_array = np.array(label_, dtype=np.float32)
-                labels.append(label_array / 256 / 1.1)
-                #print('read down****************')
-        batch.append(imgs)
-        batch.append(labels)
-
-        return batch
-
-    def __call__(self, batch_num,type_method):
-        if (self.index + batch_num) <= self.num_data:
-            batch_list = self.train_data_list[self.index:(self.index + batch_num)]
-            if type_method == 0:
-                batch_data = self.getBatch(batch_list)
-            else:
-                batch_data = self.getBatch_normal(batch_list)
-            self.index += batch_num
-
-            return batch_data
-        else:
-            self.index = 0
-            random.shuffle(self.train_data_list)
-            batch_list = self.train_data_list[self.index:(self.index + batch_num)]
-            batch_data = self.getBatch_normal(batch_list)
-            self.index += batch_num
-
-            return batch_data
 
 
 def main(args):
@@ -138,21 +24,14 @@ def main(args):
     os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
     batch_size = args.batch_size
     epochs = args.epochs
-    train_data_file = args.train_data_file
+    train_data_folder = args.train_data_folder
     model_path = args.model_path
-    eval_pixel_file = '/media/weepies/Seagate Backup Plus Drive/3DMM/3d-pixel/subt_eva.txt'
-    eval_3DFAW_file = '/media/weepies/Seagate Backup Plus Drive/3DMM/3DFAW_posmap/3DFAW_pos_eva.txt'
-    eval_300W_file = '/media/weepies/Seagate Backup Plus Drive/3DMM/train_path_ibug.txt'
     save_dir = args.checkpoint
     if  not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
     # Training data
-    data = TrainData(train_data_file)
-    eval_pixel = TrainData(eval_pixel_file)
-    eval_3DFAW = TrainData(eval_3DFAW_file)
-    eval_300W = TrainData(eval_300W_file)
-    show_data = TrainData(train_data_file)
+    data, eval_pixel, eval_3DFAW, eval_300W, show_data = load_data(train_data_folder)
     begin_epoch = 0
     # if os.path.exists(model_path + '.data-00000-of-00001'):
     #     begin_epoch = int(model_path.split('_')[-1]) + 1
@@ -257,8 +136,7 @@ def main(args):
     vertices_gt[:,1] = np.minimum(np.maximum(vertices_gt[:,1], 0), 256 - 1)  # y
     ind = np.round(vertices_gt).astype(np.int32)
     col = image[ind[:,1], ind[:,0], :] # n x 3
-    imsave('/media/weepies/Seagate Backup Plus Drive/3DMM/train_result_a/result/result_gt'+'.png',pic_gt)
-    write_obj_with_colors('/media/weepies/Seagate Backup Plus Drive/3DMM/train_result_a/result/result_gt'+'.obj',vertices_gt,triangles,col)
+    save_results(train_data_folder+'train_result_a/result/result_gt', pic_gt, vertices_gt, triangles, col)
     # cv2.imshow('ref',ref_texture_gt)
     # cv2.waitKey(0)
     for epoch in range(begin_epoch, epochs):
@@ -303,8 +181,7 @@ def main(args):
         vertices = all_vertices[face_ind, :]
 
         pic = render_texture(vertices.T,text_c.T,triangles.T,256,256,3,image)
-        imsave('/media/weepies/Seagate Backup Plus Drive/3DMM/train_result_a/result/result'+str(epoch)+'.png',pic)
-        write_obj_with_colors('/media/weepies/Seagate Backup Plus Drive/3DMM/train_result_a/result/result'+str(epoch)+'.obj',vertices,triangles,triangles)
+        save_results(train_data_folder+'train_result_a/result/result'+str(epoch), pic, vertices, triangles, triangles)
         #picture = np.multiply(pic,255)
         #print('pic',picture)
         # cv2.imshow('ref',ref_texture)
@@ -340,7 +217,7 @@ if __name__ == '__main__':
 
     par = argparse.ArgumentParser(description='Joint 3D Face Reconstruction and Dense Alignment with Position Map Regression Network')
 
-    par.add_argument('--train_data_file', default='/media/weepies/Seagate Backup Plus Drive/3DMM/3d-pixel/train_final.txt', type=str, help='The training data file')
+    par.add_argument('--train_data_folder', default='/media/weepies/Seagate Backup Plus Drive/3DMM/', type=str, help='The training data folder')
     par.add_argument('--learning_rate', default=0.0002, type=float, help='The learning rate')
     par.add_argument('--epochs', default=100, type=int, help='Total epochs')
     par.add_argument('--batch_size', default=16, type=int, help='Batch sizes')

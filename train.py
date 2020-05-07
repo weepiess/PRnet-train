@@ -13,7 +13,7 @@ from skimage.io import imread, imsave
 from utils.write import write_obj_with_colors
 from utils.augmentation import synthesize
 import scipy.io as sio
-from io.py import load_data, save_results
+from io import load_data, save_results
 #from api import PRN
 
 

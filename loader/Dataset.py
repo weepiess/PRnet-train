@@ -1,19 +1,13 @@
 import numpy as np
 import os
 import argparse
-import tensorflow as tf
 import cv2
 import random
-from predictor import resfcn256
 import math
 from datetime import datetime
-from utils import render
-from utils.render import render_texture
 from skimage.io import imread, imsave
-from utils.write import write_obj_with_colors
-from utils.augmentation import synthesize
 import scipy.io as sio
-from io.py import load_data, save_results
+
 
 class TrainData(object):
 
@@ -130,20 +124,3 @@ class TrainData(object):
             self.index += batch_num
 
             return batch_data
-
-def load_data(folder):
-    eval_pixel_file = folder+'3d-pixel/subt_eva.txt'
-    eval_3DFAW_file = folder+'3DFAW_posmap/3DFAW_pos_eva.txt'
-    eval_300W_file = folder+'train_path_ibug.txt'
-
-    data = TrainData(train_data_file)
-    eval_pixel = TrainData(eval_pixel_file)
-    eval_3DFAW = TrainData(eval_3DFAW_file)
-    eval_300W = TrainData(eval_300W_file)
-    show_data = TrainData(train_data_file)
-
-    return data, eval_pixel, eval_3DFAW, eval_300W, show_data
-
-def save_results(ftp, pic_gt, vertices_gt, triangles, col):
-    imsave(ftp+ '.png', pic_gt)
-    write_obj_with_colors(ftp+ '.obj',vertices_gt, triangles, col)

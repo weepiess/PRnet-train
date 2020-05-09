@@ -4,7 +4,7 @@ import argparse
 import tensorflow as tf
 import cv2
 import random
-from predictor import resfcn256
+from net.predictor import resfcn256
 import math
 from datetime import datetime
 from utils import render
@@ -12,26 +12,35 @@ from utils.render import render_texture
 from skimage.io import imread, imsave
 from utils.write import write_obj_with_colors
 from utils.augmentation import synthesize
+from loader.Dataset import TrainData
+from opt.config import Options
 import scipy.io as sio
-from io import load_data, save_results
-#from api import PRN
+#from net.api import PRN
 
 
 def main(args):
-
+    trainConfig = Options()
+    opt = trainConfig.get_config()
     #prn = PRN(is_dlib = True) 
     # Some arguments
-    os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-    batch_size = args.batch_size
-    epochs = args.epochs
-    train_data_folder = args.train_data_folder
+    os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
+    batch_size = opt.batch_size
+    epochs = opt.epochs
+    train_data_file = args.train_data_file
     model_path = args.model_path
+    eval_pixel_file = '/media/weepies/Seagate Backup Plus Drive/3DMM/3d-pixel/subt_eva.txt'
+    eval_3DFAW_file = '/media/weepies/Seagate Backup Plus Drive/3DMM/3DFAW_posmap/3DFAW_pos_eva.txt'
+    eval_300W_file = '/media/weepies/Seagate Backup Plus Drive/3DMM/train_path_ibug.txt'
     save_dir = args.checkpoint
     if  not os.path.exists(save_dir):
         os.makedirs(save_dir)
 
     # Training data
-    data, eval_pixel, eval_3DFAW, eval_300W, show_data = load_data(train_data_folder)
+    data = TrainData(train_data_file)
+    eval_pixel = TrainData(eval_pixel_file)
+    eval_3DFAW = TrainData(eval_3DFAW_file)
+    eval_300W = TrainData(eval_300W_file)
+    show_data = TrainData(train_data_file)
     begin_epoch = 0
     # if os.path.exists(model_path + '.data-00000-of-00001'):
     #     begin_epoch = int(model_path.split('_')[-1]) + 1
@@ -42,7 +51,7 @@ def main(args):
     # Declay learning rate half every 5 epochs
     decay_steps = 5 * epoch_iters
     # learning_rate = learning_rate * 0.5 ^ (global_step / decay_steps)
-    learning_rate = tf.train.exponential_decay(args.learning_rate, global_step,
+    learning_rate = tf.train.exponential_decay(opt.learning_rate, global_step,
                                                decay_steps, 0.5, staircase=True)
 
     x = tf.placeholder(tf.float32, shape=[None, 256, 256, 3])
@@ -103,9 +112,9 @@ def main(args):
     summary_writer = tf.summary.FileWriter('./logs', sess.graph)
     #sess.run(tf.variables_initializer(var_to_restore))
     # Begining train
-    error_f = open('./error.txt','w')
+    error_f = open('./results/error.txt','w')
     time_now = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
-    fp_log = open("log_" + time_now + ".txt","w")
+    fp_log = open("./logs/log_" + time_now + ".txt","w")
     iters_total_each_epoch = int(math.ceil(1.0 * data.num_data / batch_size))
     print('iters_total_each_epoch: ',iters_total_each_epoch)
     eval_pixel_batch = eval_pixel(eval_pixel.num_data,1)
@@ -119,12 +128,12 @@ def main(args):
     print('error of 300W start: ',loss_300W)
     #error_f.write('error in pixel 1st : '+str(loss_pixel)+' error in 3DFAW 1st : '+str(loss_3DFAW)+'\n')
     
-    image = cv2.imread('./10173-other_3-1.jpg')
+    image = cv2.imread('./examples/10173-other_3-1.jpg')
     face_ind = np.loadtxt('./Data/uv-data/face_ind.txt').astype(np.int32)
     triangles = np.loadtxt('./Data/uv-data/triangles.txt').astype(np.int32)
     input_image = image/255.
     
-    pos_gt = np.load('./10173-other_3-1.npy')
+    pos_gt = np.load('./examples/10173-other_3-1.npy')
     pos_gt = np.array(pos_gt).astype(np.float32)
     ref_texture_gt = cv2.remap(input_image, pos_gt[:,:,:2].astype(np.float32), None, interpolation=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT,borderValue=(0))
     all_colors_gt = np.reshape(ref_texture_gt, [256**2, -1])
@@ -136,7 +145,8 @@ def main(args):
     vertices_gt[:,1] = np.minimum(np.maximum(vertices_gt[:,1], 0), 256 - 1)  # y
     ind = np.round(vertices_gt).astype(np.int32)
     col = image[ind[:,1], ind[:,0], :] # n x 3
-    save_results(train_data_folder+'train_result_a/result/result_gt', pic_gt, vertices_gt, triangles, col)
+    imsave('./results/results_gt'+'.png',pic_gt)
+    write_obj_with_colors('./results/results_gt'+'.obj',vertices_gt,triangles,col)
     # cv2.imshow('ref',ref_texture_gt)
     # cv2.waitKey(0)
     for epoch in range(begin_epoch, epochs):
@@ -181,7 +191,8 @@ def main(args):
         vertices = all_vertices[face_ind, :]
 
         pic = render_texture(vertices.T,text_c.T,triangles.T,256,256,3,image)
-        save_results(train_data_folder+'train_result_a/result/result'+str(epoch), pic, vertices, triangles, triangles)
+        imsave('./results/result'+str(epoch)+'.png',pic)
+        write_obj_with_colors('./results/result'+str(epoch)+'.obj',vertices,triangles,triangles)
         #picture = np.multiply(pic,255)
         #print('pic',picture)
         # cv2.imshow('ref',ref_texture)
@@ -201,7 +212,7 @@ def main(args):
             tf.Summary.Value(tag="train loss", simple_value=train_loss_mean)])
         summary_writer.add_summary(summary, epoch)
 
-        saver.save(sess=sess, save_path='/media/weepies/Seagate Backup Plus Drive/3DMM/train_result_a/256_256_resfcn256' + '_' + str(epoch))
+        saver.save(sess=sess, save_path='./Data/train_result/256_256_resfcn256' + '_' + str(epoch))
         # Test
         # eval_pixel_batcht = eval_pixel(eval_pixel.num_data,1)
         # eval_3DFAW_batcht = eval_3DFAW(eval_3DFAW.num_data,1)
@@ -216,13 +227,8 @@ def main(args):
 if __name__ == '__main__':
 
     par = argparse.ArgumentParser(description='Joint 3D Face Reconstruction and Dense Alignment with Position Map Regression Network')
-
-    par.add_argument('--train_data_folder', default='/media/weepies/Seagate Backup Plus Drive/3DMM/', type=str, help='The training data folder')
-    par.add_argument('--learning_rate', default=0.0002, type=float, help='The learning rate')
-    par.add_argument('--epochs', default=100, type=int, help='Total epochs')
-    par.add_argument('--batch_size', default=16, type=int, help='Batch sizes')
+    par.add_argument('--train_data_file', default='/media/weepies/Seagate Backup Plus Drive/3DMM/3d-pixel/train_final.txt', type=str, help='The training data file')
     par.add_argument('--checkpoint', default='./checkpoint/', type=str, help='The path of checkpoint')
     par.add_argument('--model_path', default='./Data/net-data/256_256_resfcn256_weight', type=str, help='The path of pretrained model')
-    par.add_argument('--gpu', default='0', type=str, help='The GPU ID')
 
     main(par.parse_args())

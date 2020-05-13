@@ -1,11 +1,12 @@
 import numpy as np
 import os
 import argparse
-import tensorflow as tf
+import torch
 import cv2
 import random
-from net.predictor import resfcn256
 import math
+from net.predictor import resfcn256
+from model.PRNet import PRNet
 from datetime import datetime
 from utils import render
 from utils.render import render_texture
@@ -45,7 +46,7 @@ def main(args):
     # if os.path.exists(model_path + '.data-00000-of-00001'):
     #     begin_epoch = int(model_path.split('_')[-1]) + 1
     #     print('begin: ',begin_epoch)
-
+    '''
     epoch_iters = data.num_data / batch_size
     global_step = tf.Variable(epoch_iters * begin_epoch, trainable=False)
     # Declay learning rate half every 5 epochs
@@ -53,64 +54,11 @@ def main(args):
     # learning_rate = learning_rate * 0.5 ^ (global_step / decay_steps)
     learning_rate = tf.train.exponential_decay(opt.learning_rate, global_step,
                                                decay_steps, 0.5, staircase=True)
+    '''
+    # Model
+    model = PRNet(opt)
+    model.setup(model_path)
 
-    x = tf.placeholder(tf.float32, shape=[None, 256, 256, 3])
-    label = tf.placeholder(tf.float32, shape=[None, 256, 256, 3])
-
-    # Train net
-    net = resfcn256(256, 256)
-    x_op = net(x, is_training=True)
-    
-    # Loss
-    weights = cv2.imread("Data/uv-data/weight_mask_final.jpg")  # [256, 256, 3]
-    for i in range(13):
-        for j in range(27):
-            weights[i+59,j+78,:] = 250
-    for i in range(13):
-        for j in range(27):
-            weights[i+59,j+153,:] = 250
-    # cv2.imshow('weights',weights)
-    # cv2.waitKey(0)
-    weights_data = np.zeros([1, 256, 256, 3], dtype=np.float32)
-    weights_data[0, :, :, :] = weights 
-    loss = tf.losses.mean_squared_error(label, x_op, weights_data)
-    error = tf.losses.mean_squared_error(label, x_op)
-    # This is for batch norm layer
-    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
-    with tf.control_dependencies(update_ops):
-        train_step = tf.train.AdamOptimizer(learning_rate=learning_rate,
-                                            beta1=0.9, beta2=0.999, epsilon=1e-08,
-                                            use_locking=False).minimize(loss, global_step=global_step)
-
-    sess = tf.Session(config=tf.ConfigProto(gpu_options=tf.GPUOptions(allow_growth=True)))
-    sess.run(tf.global_variables_initializer())
-
-    if os.path.exists(model_path + '.data-00000-of-00001'):
-        print(model_path)
-        res = tf.train.Saver(net.vars).restore(sess, model_path)
-    
-
-    # tvs = [v for v in tf.trainable_variables()]
-    # print('weight :')
-    # for v in tvs:
-    #     print(v.name)
-    #     print(sess.run(v))
-
-    gv = [v for v in tf.global_variables()]
-    var_to_restore = [val for val in gv if 'resfcn256' in val.name]
-    print('var :',var_to_restore)
-    for v in var_to_restore:
-        print(v.name, '\n')
-    # ops = [o for o in sess.graph.get_operations()]
-    # print('tensor:')
-    # for o in ops:
-    #     print(o.name, '\n')
-    
-    saver = tf.train.Saver(var_list=var_to_restore)#var_list=tf.global_variables()
-    saver=tf.train.Saver(max_to_keep=100)
-    save_path = model_path
-    summary_writer = tf.summary.FileWriter('./logs', sess.graph)
-    #sess.run(tf.variables_initializer(var_to_restore))
     # Begining train
     error_f = open('./results/error.txt','w')
     time_now = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
@@ -120,9 +68,11 @@ def main(args):
     eval_pixel_batch = eval_pixel(eval_pixel.num_data,1)
     eval_3DFAW_batch = eval_3DFAW(eval_3DFAW.num_data,1)
     eval_300W_batch = eval_300W(eval_300W.num_data,1)
-    loss_pixel = sess.run(loss,feed_dict={x: eval_pixel_batch[0], label: eval_pixel_batch[1]})
-    loss_3DFAW = sess.run(loss,feed_dict={x: eval_3DFAW_batch[0], label: eval_3DFAW_batch[1]})
-    loss_300W = sess.run(loss,feed_dict={x: eval_300W_batch[0], label: eval_300W_batch[1]})
+
+    loss_pixel = model.optmize_parameters(x=eval_pixel_batch[0], label=eval_pixel_batch[1])
+    loss_3DFAW = model.optmize_parameters(x=eval_3DFAW_batch[0], label=eval_3DFAW_batch[1])
+    loss_300W = model.optmize_parameters(x=eval_300W_batch[0], label=eval_300W_batch[1])
+
     print('error of Pixel start: ',loss_pixel)
     print('error of 3DFAW start: ',loss_3DFAW)
     print('error of 300W start: ',loss_300W)
@@ -158,8 +108,7 @@ def main(args):
                 batch = data(batch_size,0)
             else:
                 batch = data(batch_size,1)
-            loss_res, _, global_step_res, learning_rate_res = sess.run(
-                [loss, train_step, global_step, learning_rate], feed_dict={x: batch[0], label: batch[1]})
+            loss_res = model.optmize_parameters(x=batch[0], label=batch[1])
             train_loss_mean = train_loss_mean + loss_res
             #summary_str = sess.run(merged_summary_op,feed_dict={x: batch[0], label: batch[1]})
             time_now_tmp = datetime.now().strftime("%Y-%m-%d_%H:%M:%S")
@@ -178,7 +127,7 @@ def main(args):
         #pic = render_texture(cropped_vertices.T,text_c.T,prn.triangles.T,256,256)
         # pos = np.load('./10082-15-1.npy')
         # pos = np.array(pos).astype(np.float32)
-        posmap = sess.run(x_op,feed_dict={x: input_image[np.newaxis, :,:,:]})
+        posmap = model.generate(x=input_image[np.newaxis, :,:,:])
         posmap = np.squeeze(posmap)
         posmap = posmap*256*1.1
         cropped_vertices = np.reshape(posmap, [-1, 3]).T
@@ -202,17 +151,18 @@ def main(args):
         # ori_pic = tf.image.decode_png(image, channels=4)
         # ori_pic = tf.expand_dims(ori_pic, 0)
 
-        loss_pixel_ = sess.run(error,feed_dict={x: eval_pixel_batch_[0], label: eval_pixel_batch_[1]})
+        _, loss_pixel_, _ = model.forward(x=eval_pixel_batch_[0], label=eval_pixel_batch_[1])
         #loss_3DFAW_ = sess.run(error,feed_dict={x: eval_3DFAW_batch_[0], label: eval_3DFAW_batch_[1]})
-        loss_300W_ = sess.run(loss,feed_dict={x: eval_300W_batch_[0], label: eval_300W_batch_[1]})
+        _, _, loss_300W_ = model.forward(x=eval_300W_batch_[0], label=eval_300W_batch_[1])
+        '''
         summary =tf.Summary(value=[
             tf.Summary.Value(tag="error_pixel", simple_value=loss_pixel_), 
             #tf.Summary.Value(tag="error_3DFAW", simple_value=loss_3DFAW_),
             tf.Summary.Value(tag="error_300W", simple_value=loss_300W_),
             tf.Summary.Value(tag="train loss", simple_value=train_loss_mean)])
         summary_writer.add_summary(summary, epoch)
-
-        saver.save(sess=sess, save_path='./Data/train_result/256_256_resfcn256' + '_' + str(epoch))
+        '''
+        model.save(save_path='./Data/train_result/256_256_resfcn256' + '_' + str(epoch))
         # Test
         # eval_pixel_batcht = eval_pixel(eval_pixel.num_data,1)
         # eval_3DFAW_batcht = eval_3DFAW(eval_3DFAW.num_data,1)

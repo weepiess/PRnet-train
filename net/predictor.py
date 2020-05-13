@@ -1,106 +1,345 @@
-import tensorflow as tf
-import tensorflow.contrib.layers as tcl
-from tensorflow.contrib.framework import arg_scope
+import torch
+from torch import nn
+import torch.nn.functional as F
 import numpy as np
+import math
 
-def resBlock(x, num_outputs, kernel_size = 4, stride=1, activation_fn=tf.nn.relu, normalizer_fn=tcl.batch_norm, scope=None):
+'''
+def resBlock(x, num_outputs, kernel_size = 4, stride=1):
     assert num_outputs%2==0 #num_outputs must be divided by channel_factor(2 here)
-    with tf.variable_scope(scope, 'resBlock'):
-        shortcut = x
-        if stride != 1 or x.get_shape()[3] != num_outputs:
-            shortcut = tcl.conv2d(shortcut, num_outputs, kernel_size=1, stride=stride, 
-                        activation_fn=None, normalizer_fn=None, scope='shortcut')
-        x = tcl.conv2d(x, num_outputs/2, kernel_size=1, stride=1, padding='SAME')
-        x = tcl.conv2d(x, num_outputs/2, kernel_size=kernel_size, stride=stride, padding='SAME')
-        x = tcl.conv2d(x, num_outputs, kernel_size=1, stride=1, activation_fn=None, padding='SAME', normalizer_fn=None)
+    shortcut = x
+    if stride != 1 or x.size()[1] != num_outputs:
+        A = nn.Conv2d(in_channels = x.size()[2],out_channels = num_outputs,kernel_size = 1,stride = stride)
+        shortcut = A(x)
+    B = nn.Sequential(
+            nn.Conv2d(in_channels=num_outputs,out_channels=num_outputs/2,kernel_size=1,stride=1),
+            nn.BatchNorm2d(num_outputs/2),
+            nn.ReLU(True),
+            nn.functional.pad,
+            nn.Conv2d(in_channels=num_outputs/2,out_channels=num_outputs/2,kernel_size=kernel_size,stride=stride,
+                      padding=math.ceil((kernel_size-stride)/2)),
+            nn.BatchNorm2d(num_outputs/2),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=num_outputs/2,out_channels=num_outputs,kernel_size=1,stride=1)
+        )
+    x = B(x)
 
-        x += shortcut       
-        x = normalizer_fn(x)
-        x = activation_fn(x)
+    x += shortcut
+    C = nn.Sequential(
+        nn.BatchNorm2d(num_outputs),
+        nn.ReLU()
+    )
+    x = C(x)
+
     return x
-
-
-class resfcn256(object):
+'''
+'''
+class resfcn256(nn.Module):
     def __init__(self, resolution_inp = 256, resolution_op = 256, channel = 3, name = 'resfcn256'):
+        super(resfcn256, self).__init__()
         self.name = name
         self.channel = channel
         self.resolution_inp = resolution_inp
         self.resolution_op = resolution_op
+    def forward(self, x):
+        size = 16
+        A = nn.Sequential(
+            nn.Conv2d(in_channels=x.size[1], out_channels=size, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size),
+            nn.ReLU(True)
+        )
+        se = A(x)
+        se = resBlock(se, num_outputs=size * 2, kernel_size=4, stride=2)  # 128 x 128 x 32
+        se = resBlock(se, num_outputs=size * 2, kernel_size=4, stride=1)  # 128 x 128 x 32
+        se = resBlock(se, num_outputs=size * 4, kernel_size=4, stride=2)  # 64 x 64 x 64
+        se = resBlock(se, num_outputs=size * 4, kernel_size=4, stride=1)  # 64 x 64 x 64
+        se = resBlock(se, num_outputs=size * 8, kernel_size=4, stride=2)  # 32 x 32 x 128
+        se = resBlock(se, num_outputs=size * 8, kernel_size=4, stride=1)  # 32 x 32 x 128
+        se = resBlock(se, num_outputs=size * 16, kernel_size=4, stride=2)  # 16 x 16 x 256
+        se = resBlock(se, num_outputs=size * 16, kernel_size=4, stride=1)  # 16 x 16 x 256
+        se = resBlock(se, num_outputs=size * 32, kernel_size=4, stride=2)  # 8 x 8 x 512
+        se = resBlock(se, num_outputs=size * 32, kernel_size=4, stride=1)  # 8 x 8 x 512
+        B = nn.Sequential(
+            nn.ConvTranspose2d(in_channels=se.size[1], out_channels=size * 32, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 32),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 32, out_channels=size * 16, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size * 16),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 16, out_channels=size * 16, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 16),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 16, out_channels=size * 16, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 16),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 16, out_channels=size * 8, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size * 8),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 8, out_channels=size * 8, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 8),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 8, out_channels=size * 8, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 8),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 8, out_channels=size * 4, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size * 4),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 4, out_channels=size * 4, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 4),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 4, out_channels=size * 4, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 4),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 4, out_channels=size * 2, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size * 2),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 2, out_channels=size * 2, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 2),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 2, out_channels=size, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size, out_channels=size, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size, out_channels=3, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(3),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=3, out_channels=3, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(3),
+            nn.ReLU(True)
+        )
+        pd = B(se)
+        C = nn.Sequential(
+            nn.ConvTranspose2d(in_channels=3, out_channels=3, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(3),
+            nn.Sigmoid(),
+        )
+        pos = C(pd)
+        return pos
+'''
 
-    def __call__(self, x, is_training = True):
-        with tf.variable_scope(self.name) as scope:
-            with arg_scope([tcl.batch_norm], is_training=is_training, scale=True):
-                with arg_scope([tcl.conv2d, tcl.conv2d_transpose], activation_fn=tf.nn.relu, 
-                                     normalizer_fn=tcl.batch_norm, 
-                                     biases_initializer=None, 
-                                     padding='SAME',
-                                     weights_regularizer=tcl.l2_regularizer(0.0002)):
-                    size = 16 
-                    # x: s x s x 3
-                    se = tcl.conv2d(x, num_outputs=size, kernel_size=4, stride=1) # 256 x 256 x 16
-                    se = resBlock(se, num_outputs=size * 2, kernel_size=4, stride=2) # 128 x 128 x 32
-                    se = resBlock(se, num_outputs=size * 2, kernel_size=4, stride=1) # 128 x 128 x 32
-                    se = resBlock(se, num_outputs=size * 4, kernel_size=4, stride=2) # 64 x 64 x 64
-                    se = resBlock(se, num_outputs=size * 4, kernel_size=4, stride=1) # 64 x 64 x 64
-                    se = resBlock(se, num_outputs=size * 8, kernel_size=4, stride=2) # 32 x 32 x 128
-                    se = resBlock(se, num_outputs=size * 8, kernel_size=4, stride=1) # 32 x 32 x 128
-                    se = resBlock(se, num_outputs=size * 16, kernel_size=4, stride=2) # 16 x 16 x 256
-                    se = resBlock(se, num_outputs=size * 16, kernel_size=4, stride=1) # 16 x 16 x 256
-                    se = resBlock(se, num_outputs=size * 32, kernel_size=4, stride=2) # 8 x 8 x 512
-                    se = resBlock(se, num_outputs=size * 32, kernel_size=4, stride=1) # 8 x 8 x 512
 
-                    pd = tcl.conv2d_transpose(se, size * 32, 4, stride=1) # 8 x 8 x 512 
-                    pd = tcl.conv2d_transpose(pd, size * 16, 4, stride=2) # 16 x 16 x 256 
-                    pd = tcl.conv2d_transpose(pd, size * 16, 4, stride=1) # 16 x 16 x 256 
-                    pd = tcl.conv2d_transpose(pd, size * 16, 4, stride=1) # 16 x 16 x 256 
-                    pd = tcl.conv2d_transpose(pd, size * 8, 4, stride=2) # 32 x 32 x 128 
-                    pd = tcl.conv2d_transpose(pd, size * 8, 4, stride=1) # 32 x 32 x 128 
-                    pd = tcl.conv2d_transpose(pd, size * 8, 4, stride=1) # 32 x 32 x 128 
-                    pd = tcl.conv2d_transpose(pd, size * 4, 4, stride=2) # 64 x 64 x 64 
-                    pd = tcl.conv2d_transpose(pd, size * 4, 4, stride=1) # 64 x 64 x 64 
-                    pd = tcl.conv2d_transpose(pd, size * 4, 4, stride=1) # 64 x 64 x 64 
-                    
-                    pd = tcl.conv2d_transpose(pd, size * 2, 4, stride=2) # 128 x 128 x 32
-                    pd = tcl.conv2d_transpose(pd, size * 2, 4, stride=1) # 128 x 128 x 32
-                    pd = tcl.conv2d_transpose(pd, size, 4, stride=2) # 256 x 256 x 16
-                    pd = tcl.conv2d_transpose(pd, size, 4, stride=1) # 256 x 256 x 16
+class resfcn256(nn.Module):
+    def __init__(self):
+        super(resfcn256, self).__init__()
+        self.A = nn.Sequential(
+            nn.Conv2d(3, out_channels=16, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(16),
+            nn.ReLU(True)
+        )
+        self.B = nn.Sequential(
+            nn.ConvTranspose2d(in_channels=se.size[1], out_channels=size * 32, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 32),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 32, out_channels=size * 16, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size * 16),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 16, out_channels=size * 16, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 16),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 16, out_channels=size * 16, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 16),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 16, out_channels=size * 8, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size * 8),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 8, out_channels=size * 8, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 8),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 8, out_channels=size * 8, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 8),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 8, out_channels=size * 4, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size * 4),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 4, out_channels=size * 4, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 4),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 4, out_channels=size * 4, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 4),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 4, out_channels=size * 2, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size * 2),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 2, out_channels=size * 2, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size * 2),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size * 2, out_channels=size, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(size),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size, out_channels=size, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(size),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=size, out_channels=3, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(3),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(in_channels=3, out_channels=3, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(3),
+            nn.ReLU(True)
+        )
+        self.C = nn.Sequential(
+            nn.ConvTranspose2d(in_channels=3, out_channels=3, kernel_size=4, stride=1, padding=2),
+            nn.BatchNorm2d(3)
+        )
+        self.ra = nn.Conv2d(in_channels = 16,out_channels = 32,kernel_size = 1,stride = 2)
+        self.rc = nn.Conv2d(in_channels = 32,out_channels = 64,kernel_size = 1,stride = 2)
+        self.re = nn.Conv2d(in_channels = 64,out_channels = 128,kernel_size = 1,stride = 2)
+        self.rg = nn.Conv2d(in_channels = 128,out_channels = 256,kernel_size = 1,stride = 2)
+        self.ri = nn.Conv2d(in_channels = 256,out_channels = 512,kernel_size = 1,stride = 2)
+        self.rA = nn.Sequential(
+            nn.Conv2d(in_channels=32,out_channels=16,kernel_size=1,stride=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=16,out_channels=32,kernel_size=4,stride=2,padding=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=16,out_channels=32,kernel_size=1,stride=1)
+        )
+        self.rB = nn.Sequential(
+            nn.Conv2d(in_channels=32,out_channels=16,kernel_size=1,stride=1),
+            nn.BatchNorm2d(16),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=16,out_channels=16,kernel_size=4,stride=1,padding=2),
+            nn.BatchNorm2d(16),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=16,out_channels=32,kernel_size=1,stride=1)
+        )
+        self.rC = nn.Sequential(
+            nn.Conv2d(in_channels=64,out_channels=32,kernel_size=1,stride=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=32,out_channels=32,kernel_size=4,stride=2,padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=32,out_channels=64,kernel_size=1,stride=1)
+        )
+        self.rD = nn.Sequential(
+            nn.Conv2d(in_channels=64,out_channels=32,kernel_size=1,stride=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=32,out_channels=32,kernel_size=4,stride=1,padding=2),
+            nn.BatchNorm2d(32),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=32,out_channels=64,kernel_size=1,stride=1)
+        )
+        self.rE = nn.Sequential(
+            nn.Conv2d(in_channels=128,out_channels=64,kernel_size=1,stride=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=64,out_channels=64,kernel_size=4,stride=2,
+                      padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=64,out_channels=128,kernel_size=1,stride=1)
+        )
+        self.rF = nn.Sequential(
+            nn.Conv2d(in_channels=128,out_channels=64,kernel_size=1,stride=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=64,out_channels=64,kernel_size=4,stride=1,padding=2),
+            nn.BatchNorm2d(64),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=64,out_channels=128,kernel_size=1,stride=1)
+        )
+        self.rG = nn.Sequential(
+            nn.Conv2d(in_channels=256,out_channels=128,kernel_size=1,stride=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=128,out_channels=128,kernel_size=4,stride=2,padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=128,out_channels=256,kernel_size=1,stride=1)
+        )
+        self.rH = nn.Sequential(
+            nn.Conv2d(in_channels=256,out_channels=128,kernel_size=1,stride=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=128,out_channels=128,kernel_size=4,stride=1,padding=2),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=128,out_channels=256,kernel_size=1,stride=1)
+        )
+        self.rI = nn.Sequential(
+            nn.Conv2d(in_channels=512,out_channels=256,kernel_size=1,stride=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=256,out_channels=256,kernel_size=4,stride=2,padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=256,out_channels=512,kernel_size=1,stride=1)
+        )
+        self.rJ = nn.Sequential(
+            nn.Conv2d(in_channels=512,out_channels=256,kernel_size=1,stride=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=256,out_channels=256,kernel_size=4,stride=1,padding=2),
+            nn.BatchNorm2d(128),
+            nn.ReLU(True),
+            nn.Conv2d(in_channels=256,out_channels=512,kernel_size=1,stride=1)
+        )
+        self.r1 = nn.Sequential(nn.BatchNorm2d(32), nn.ReLU(True))
+        self.r2 = nn.Sequential(nn.BatchNorm2d(64), nn.ReLU(True))
+        self.r3 = nn.Sequential(nn.BatchNorm2d(128), nn.ReLU(True))
+        self.r4 = nn.Sequential(nn.BatchNorm2d(256), nn.ReLU(True))
+        self.r5 = nn.Sequential(nn.BatchNorm2d(512), nn.ReLU(True))
 
-                    pd = tcl.conv2d_transpose(pd, 3, 4, stride=1) # 256 x 256 x 3
-                    pd = tcl.conv2d_transpose(pd, 3, 4, stride=1) # 256 x 256 x 3
-                    pos = tcl.conv2d_transpose(pd, 3, 4, stride=1, activation_fn = tf.nn.sigmoid)#, padding='SAME', weights_initializer=tf.random_normal_initializer(0, 0.02))
-                                
-                    return pos
-    @property
-    def vars(self):
-        return [var for var in tf.global_variables() if self.name in var.name]
+    def forward(self, x):
+        se = self.A(x)
 
+        se_r = self.ra(se)
+        se = self.rA(se_r)
+        se += se_r
+        se = self.r1(se)
 
-class PosPrediction():
-    def __init__(self, resolution_inp = 256, resolution_op = 256): 
-        # -- hyper settings
-        self.resolution_inp = resolution_inp
-        self.resolution_op = resolution_op
-        self.MaxPos = resolution_inp*1.1
+        se_r = se
+        se = self.rB(se_r)
+        se += se_r
+        se = self.r1(se)
 
-        # network type
-        self.network = resfcn256(self.resolution_inp, self.resolution_op)
+        se_r = self.rc(se)
+        se = self.rC(se_r)
+        se += se_r
+        se = self.r2(se)
 
-        # net forward
-        self.x = tf.placeholder(tf.float32, shape=[None, self.resolution_inp, self.resolution_inp, 3])  
-        self.x_op = self.network(self.x, is_training = False)
-        self.sess = tf.Session(config=tf.ConfigProto(gpu_options=tf.GPUOptions(allow_growth=True)))
+        se_r = se
+        se = self.rD(se_r)
+        se += se_r
+        se = self.r2(se)
 
-    def restore(self, model_path):        
-        tf.train.Saver(self.network.vars).restore(self.sess, model_path)
- 
-    def predict(self, image):
-        pos = self.sess.run(self.x_op, 
-                    feed_dict = {self.x: image[np.newaxis, :,:,:]})
-        pos = np.squeeze(pos)
-        return pos*self.MaxPos
+        se_r = self.re(se)
+        se = self.rE(se_r)
+        se += se_r
+        se = self.r3(se)
 
-    def predict_batch(self, images):
-        pos = self.sess.run(self.x_op, 
-                    feed_dict = {self.x: images})
-        return pos*self.MaxPos
+        se_r = se
+        se = self.rF(se_r)
+        se += se_r
+        se = self.r3(se)
+
+        se_r = self.rg(se)
+        se = self.rG(se_r)
+        se += se_r
+        se = self.r4(se)
+
+        se_r = se
+        se = self.rH(se_r)
+        se += se_r
+        se = self.r4(se)
+
+        se_r = self.ri(se)
+        se = self.rI(se_r)
+        se += se_r
+        se = self.r5(se)
+
+        se_r = se
+        se = self.rJ(se_r)
+        se += se_r
+        se = self.r5(se)
+
+        pd = self.B(se)
+        pos = self.C(pd)
+        pos = F.sigmoid(pos)
+        return pos
+
 

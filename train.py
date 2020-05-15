@@ -14,6 +14,9 @@ from skimage.io import imread, imsave
 from utils.write import write_obj_with_colors
 from utils.augmentation import synthesize
 from loader.Dataset import TrainData
+#from loader.eval_3dfaw import eval_meshes as
+from loader.eval_300w import eval_meshes
+#from loader.eval_pixel import eval_meshes as
 from opt.config import Options
 import scipy.io as sio
 #from net.api import PRN
@@ -29,9 +32,11 @@ def main(args):
     epochs = opt.epochs
     train_data_file = args.train_data_file
     model_path = args.model_path
-    eval_pixel_file = '/media/weepies/Seagate Backup Plus Drive/3DMM/3d-pixel/subt_eva.txt'
-    eval_3DFAW_file = '/media/weepies/Seagate Backup Plus Drive/3DMM/3DFAW_posmap/3DFAW_pos_eva.txt'
-    eval_300W_file = '/media/weepies/Seagate Backup Plus Drive/3DMM/train_path_ibug.txt'
+    eval_pixel_file = args.eval_pixel_file
+    eval_3DFAW_file = args.eval_3DFAW_file
+    eval_300W_file = args.eval_300W_file
+    res_dir = args.res_dir
+    ref_dir = args.ref_dir
     save_dir = args.checkpoint
     if  not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -58,6 +63,7 @@ def main(args):
     # Model
     model = PRNet(opt)
     model.setup(model_path)
+    model.train()
 
     # Begining train
     error_f = open('./results/error.txt','w')
@@ -99,6 +105,7 @@ def main(args):
     write_obj_with_colors('./results/results_gt'+'.obj',vertices_gt,triangles,col)
     # cv2.imshow('ref',ref_texture_gt)
     # cv2.waitKey(0)
+    test_list = []
     for epoch in range(begin_epoch, epochs):
         train_loss_mean = 0
         #show_data_ = show_data(1)
@@ -135,6 +142,7 @@ def main(args):
         ref_texture = cv2.remap(input_image, pos[:,:,:2].astype(np.float32), None, interpolation=cv2.INTER_NEAREST, borderMode=cv2.BORDER_CONSTANT,borderValue=(0))
         all_colors = np.reshape(ref_texture, [256**2, -1])
         text_c = all_colors[face_ind, :]*255
+        test_list.append(pos)
 
         all_vertices = np.reshape(pos, [256**2, -1])
         vertices = all_vertices[face_ind, :]
@@ -171,6 +179,8 @@ def main(args):
         #print('error of Pixel: ',loss_pixel2)
         #print('error of 3DFAW: ',loss_3DFAW2)
         #error_f.write('error in pixel: '+str(loss_pixel2)+' error in 3DFAW: '+str(loss_3DFAW2)+'\n')
+    model.eval()
+    eval_meshes(test_list, res_dir, ref_dir)
     fp_log.close()
     error_f.close()
 
@@ -180,5 +190,15 @@ if __name__ == '__main__':
     par.add_argument('--train_data_file', default='/media/weepies/Seagate Backup Plus Drive/3DMM/3d-pixel/train_final.txt', type=str, help='The training data file')
     par.add_argument('--checkpoint', default='./checkpoint/', type=str, help='The path of checkpoint')
     par.add_argument('--model_path', default='./Data/net-data/256_256_resfcn256_weight', type=str, help='The path of pretrained model')
+    par.add_argument('--eval_pixel_file', default='/media/weepies/Seagate Backup Plus Drive/3DMM/3d-pixel/subt_eva.txt', type=str,
+                     help='eval_pixel_file')
+    par.add_argument('--eval_3DFAW_file', default='/media/weepies/Seagate Backup Plus Drive/3DMM/3DFAW_posmap/3DFAW_pos_eva.txt', type=str,
+                     help='eval_3DFAW_file')
+    par.add_argument('--eval_300W_file', default='/media/weepies/Seagate Backup Plus Drive/3DMM/train_path_ibug.txt', type=str,
+                     help='eval_300W_file')
+    par.add_argument('--checkpoint', default='./checkpoint/', type=str, help='The path of checkpoint')
+    par.add_argument('--res_dir', default='', type=str, help='eval_mesh_res_dir')
+    par.add_argument('--ref_dir', default='', type=str, help='eval_mesh_ref_dir')
+
 
     main(par.parse_args())

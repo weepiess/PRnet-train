@@ -12,7 +12,7 @@ import scipy.io as sio
 class TrainData(object):
 
     def __init__(self, train_data_file):
-        super(TrainData, self).__init__()
+
         self.train_data_file = train_data_file
         self.train_data_list = []
         self.readTrainData()

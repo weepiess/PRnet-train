@@ -7,7 +7,7 @@ import sys
 import cv2
 import math
 from math import cos, sin
-from render import render_texture
+from utils.render import render_texture
 import scipy.io as sio
 import time
 import random
